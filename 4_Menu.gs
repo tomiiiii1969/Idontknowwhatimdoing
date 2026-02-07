@@ -15,8 +15,9 @@ function onOpen() {
     .createMenu("🎯 Entrevistas")
     .addItem("📊 Parsear When2Meet CSV", "parseWhen2MeetAndTabulate")
     .addSeparator()
-    .addItem("🔗 Ver URL del webhook", "showWebhookUrl")
-    .addItem("🧪 Test: simular webhook Calendly", "testCalendlyWebhook")
+    .addItem("🔗 Ver URL del webhook (para Zapier)", "showWebhookUrl")
+    .addItem("🧪 Test: simular payload Zapier", "testZapierPayload")
+    .addItem("🧪 Test: simular webhook Calendly directo", "testCalendlyWebhook")
     .addSeparator()
     .addItem("📋 Ver resumen de disponibilidad", "showAvailabilitySummary")
     .addItem("🔄 Recargar disponibilidad", "parseWhen2MeetAndTabulate")
@@ -32,11 +33,14 @@ function showWebhookUrl() {
 
   if (url) {
     SpreadsheetApp.getUi().alert(
-      "URL del Webhook\n\n" +
+      "URL del Webhook para Zapier\n\n" +
       url + "\n\n" +
-      "Configura esta URL en Calendly:\n" +
-      "Calendly → Integrations → Webhooks → Add Webhook\n" +
-      "Event: invitee.created"
+      "Configurar en Zapier:\n" +
+      "1. Trigger: Calendly → Invitee Created\n" +
+      "2. Action: Webhooks by Zapier → POST\n" +
+      "3. URL: pegar esta URL\n" +
+      "4. Payload Type: json\n" +
+      "5. Mapear los campos (ver ZAPIER_SETUP.md en el repo)"
     );
   } else {
     SpreadsheetApp.getUi().alert(
@@ -125,6 +129,92 @@ function testCalendlyWebhook() {
   } else {
     logAssignment_(eventData, assigned, "TEST (sin evento de calendar)");
     ui.alert("Test completado sin crear evento. Log actualizado.");
+  }
+}
+
+
+/**
+ * Simula un payload de Zapier para testing.
+ * Usa la próxima franja viable y construye el payload en formato Zapier (plano).
+ */
+function testZapierPayload() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = ss.getSheetByName(CONFIG.AVAILABILITY_SHEET);
+
+  if (!sheet) {
+    SpreadsheetApp.getUi().alert(
+      "Primero ejecuta 'Parsear When2Meet CSV' para generar la tabla de disponibilidad."
+    );
+    return;
+  }
+
+  // Buscar primera franja viable
+  var data = sheet.getDataRange().getValues();
+  var testTime = null;
+
+  for (var i = 1; i < data.length; i++) {
+    var totalAvailable = data[i][data[i].length - 2];
+    if (totalAvailable >= CONFIG.MIN_INTERVIEWERS) {
+      testTime = String(data[i][0]);
+      break;
+    }
+  }
+
+  if (!testTime) {
+    SpreadsheetApp.getUi().alert(
+      "No se encontró ninguna franja con " + CONFIG.MIN_INTERVIEWERS + "+ entrevistadores disponibles."
+    );
+    return;
+  }
+
+  // Construir payload en formato Zapier (plano, sin nesting)
+  var startDate = new Date(testTime);
+  var endDate = new Date(startDate.getTime() + CONFIG.INTERVIEW_DURATION_MINUTES * 60000);
+
+  var zapierPayload = {
+    source: "zapier",
+    secret: CONFIG.ZAPIER_WEBHOOK_SECRET || "test",
+    start_time: startDate.toISOString(),
+    end_time: endDate.toISOString(),
+    candidate_name: "Candidato de Prueba (Zapier)",
+    candidate_email: "test.zapier@example.com",
+    event_type_name: "Entrevista de prueba",
+    calendly_event_uri: "https://api.calendly.com/scheduled_events/ZAPIER_TEST",
+    cancel_url: "",
+    reschedule_url: "",
+  };
+
+  // Ejecutar extracción con formato Zapier
+  var eventData = extractZapierEventData_(zapierPayload);
+  if (!eventData) {
+    SpreadsheetApp.getUi().alert("Error: no se pudo extraer datos del payload Zapier de prueba.");
+    return;
+  }
+
+  var available = findAvailableInterviewers_(eventData.startTime, eventData.endTime);
+  var assigned = selectInterviewers_(available);
+
+  var assignedNames = assigned.map(function(a) { return a.name; }).join(", ");
+  var availableNames = available.map(function(a) { return a.name; }).join(", ");
+
+  var ui = SpreadsheetApp.getUi();
+  var response = ui.alert(
+    "Test Zapier Payload",
+    "Formato: Zapier (payload plano)\n" +
+    "Franja: " + testTime + "\n\n" +
+    "Disponibles (" + available.length + "): " + availableNames + "\n" +
+    "Se asignarían (" + assigned.length + "): " + assignedNames + "\n\n" +
+    "¿Crear evento real en Google Calendar?",
+    ui.ButtonSet.YES_NO
+  );
+
+  if (response === ui.Button.YES) {
+    var calId = createCalendarEvent_(eventData, assigned);
+    logAssignment_(eventData, assigned, "ZAPIER TEST OK - " + calId);
+    ui.alert("Evento de prueba creado.\nRevisa tu Google Calendar.");
+  } else {
+    logAssignment_(eventData, assigned, "ZAPIER TEST (sin evento de calendar)");
+    ui.alert("Test Zapier completado sin crear evento. Log actualizado.");
   }
 }
 

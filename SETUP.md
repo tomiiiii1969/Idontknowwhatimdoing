@@ -5,10 +5,12 @@
 ```
 When2Meet CSV ──→ Google Sheet (disponibilidad tabulada)
                         ↑
-Calendly webhook ───→ Apps Script ──→ Google Calendar
-                        │                (evento con entrevistadores)
-                        ↓
-                  Log de asignaciones
+Candidato agenda ──→ Calendly ──→ Zapier (polling) ──→ POST ──→ Apps Script
+                                                                     │
+                                                                     ├──→ Google Calendar
+                                                                     │    (evento con entrevistadores)
+                                                                     ↓
+                                                               Log de asignaciones
 ```
 
 ## Archivos
@@ -17,10 +19,11 @@ Calendly webhook ───→ Apps Script ──→ Google Calendar
 |---------|----------|
 | `Config.gs` | Configuración: timezone, emails, mínimo de entrevistadores |
 | `1_ParseCSV.gs` | Parsea el CSV de When2Meet → tabla de disponibilidad con formato |
-| `2_CalendlyWebhook.gs` | Recibe webhooks de Calendly, busca disponibilidad, asigna |
+| `2_CalendlyWebhook.gs` | Recibe POST de Zapier (o Calendly directo), busca disponibilidad, asigna |
 | `3_CalendarScheduler.gs` | Crea eventos en Google Calendar e invita entrevistadores |
 | `4_Menu.gs` | Menú en Google Sheets para ejecutar todo sin tocar código |
 | `sample_when2meet.csv` | CSV de ejemplo para probar |
+| `ZAPIER_SETUP.md` | Guía paso a paso para configurar el Zap |
 
 ## Paso a paso
 
@@ -69,10 +72,17 @@ INTERVIEWER_EMAILS: {
 },
 ```
 
+Configurar el secreto compartido con Zapier:
+
+```javascript
+ZAPIER_WEBHOOK_SECRET: "un-valor-aleatorio-largo-aqui",
+```
+
 Ajustar opcionalmente:
 - `TIMEZONE` — zona horaria de referencia
 - `MIN_INTERVIEWERS` — mínimo requerido por entrevista
 - `INTERVIEW_DURATION_MINUTES` — duración de cada slot
+- `ACCEPTED_SOURCE` — `"any"` (default), `"zapier"`, o `"calendly"`
 
 ### 5. Parsear el When2Meet
 
@@ -90,30 +100,35 @@ Ajustar opcionalmente:
 5. Clic en **Deploy**
 6. Copiar la URL del web app
 
-### 7. Configurar Calendly
+### 7. Configurar Zapier
 
-1. Ir a [Calendly Integrations](https://calendly.com/integrations)
-2. Webhooks → **Add Webhook Subscription**
-3. Pegar la URL del paso 6
-4. Events: seleccionar **invitee.created**
-5. Guardar
+Calendly webhooks directos requieren plan Premium. Usamos Zapier como puente (funciona con Calendly gratuito).
+
+1. Ir a [zapier.com](https://zapier.com) y crear cuenta o iniciar sesión
+2. Create Zap → Trigger: **Calendly → Invitee Created**
+3. Action: **Webhooks by Zapier → POST** → URL del paso 6
+4. Seguir la guía detallada en **`ZAPIER_SETUP.md`** para el mapeo de campos
 
 ### 8. Probar
 
-1. En el Sheet: **🎯 Entrevistas → 🧪 Test: simular webhook Calendly**
-2. El test buscará la primera franja viable y te preguntará si crear un evento real
-3. Verificar que se creó el evento en Google Calendar con los entrevistadores correctos
+1. En el Sheet: **🎯 Entrevistas → 🧪 Test: simular payload Zapier**
+2. El test construirá un payload formato Zapier y buscará la primera franja viable
+3. Te preguntará si crear un evento real en Google Calendar
+4. Verificar que se creó el evento con los entrevistadores correctos
+5. Una vez confirmado, crear un booking de prueba en Calendly y esperar que Zapier lo detecte (~15 min en plan free)
 
 ## Flujo en producción
 
 ```
 1. Candidato agenda en Calendly
-2. Calendly envía webhook → doPost()
-3. Apps Script busca la hora en la tabla de disponibilidad
-4. Encuentra entrevistadores con "Libre" en esa franja
-5. Selecciona los que tienen menos entrevistas (balanceo de carga)
-6. Crea evento en Google Calendar e invita a todos
-7. Loguea la asignación en la hoja Log_Asignaciones
+2. Zapier detecta el nuevo booking (polling cada 1-15 min según tu plan)
+3. Zapier envía POST a Apps Script con datos mapeados
+4. Apps Script verifica el secreto compartido
+5. Apps Script busca la hora en la tabla de disponibilidad
+6. Encuentra entrevistadores con "Libre" en esa franja
+7. Selecciona los que tienen menos entrevistas (balanceo de carga)
+8. Crea evento en Google Calendar e invita a todos
+9. Loguea la asignación en la hoja Log_Asignaciones
 ```
 
 ## Actualizar disponibilidad
@@ -126,6 +141,6 @@ Cuando los entrevistadores actualicen su When2Meet:
 ## Troubleshooting
 
 - **"No se encontró la hoja When2Meet_CSV"**: Crear la hoja con ese nombre exacto
-- **Webhook no llega**: Verificar la URL en Calendly, revisar la hoja `Webhook_Debug`
+- **Webhook no llega**: Verificar la URL en Zapier, revisar la hoja `Webhook_Debug`, y ver `ZAPIER_SETUP.md` → Troubleshooting
 - **No se asignan entrevistadores**: Verificar que los nombres en `INTERVIEWER_EMAILS` coincidan exactamente con los del CSV
 - **Error de permisos en Calendar**: Re-autorizar en Apps Script → Run → Authorize

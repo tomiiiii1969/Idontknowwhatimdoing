@@ -1,18 +1,23 @@
 /**
  * ============================================================
- * FASE 2: Webhook endpoint para Calendly
+ * FASE 2: Webhook endpoint (Zapier bridge + Calendly directo)
  * ============================================================
  *
- * Este script expone un doPost() que recibe webhooks de Calendly.
+ * Este script expone un doPost() que recibe datos de entrevistas.
+ * Soporta dos fuentes:
+ *   - Zapier: Calendly trigger → Webhooks POST (no requiere Calendly Premium)
+ *   - Calendly directo: webhook nativo invitee.created (requiere Premium)
+ *
  * Cuando un candidato agenda una entrevista:
- *   1. Recibe el webhook con los datos del evento
- *   2. Extrae fecha/hora y datos del candidato
- *   3. Busca entrevistadores disponibles en esa franja
- *   4. Crea evento en Google Calendar con los entrevistadores
- *   5. Loguea la asignación en la hoja de log
+ *   1. Recibe el POST con los datos del evento
+ *   2. Verifica el secreto compartido (si está configurado)
+ *   3. Detecta la fuente (Zapier vs Calendly) y extrae datos
+ *   4. Busca entrevistadores disponibles en esa franja
+ *   5. Crea evento en Google Calendar con los entrevistadores
+ *   6. Loguea la asignación en la hoja de log
  *
  * DEPLOY: Publicar como Web App (Execute as: Me, Access: Anyone)
- * La URL resultante es la que se configura en Calendly como webhook.
+ * La URL resultante se configura en Zapier como destino del Webhook POST.
  */
 
 /**
@@ -25,7 +30,7 @@ function doGet(e) {
 }
 
 /**
- * Endpoint POST - recibe webhooks de Calendly
+ * Endpoint POST - recibe datos de Zapier o Calendly directo
  */
 function doPost(e) {
   try {
@@ -34,13 +39,30 @@ function doPost(e) {
     // Log del payload crudo para debug
     logWebhookPayload_(payload);
 
-    // Solo procesar invitee.created (nuevo agendamiento)
-    if (payload.event !== "invitee.created") {
-      return jsonResponse_({ status: "ignored", reason: "Event type: " + payload.event });
+    // Verificar secreto compartido (si está configurado)
+    if (CONFIG.ZAPIER_WEBHOOK_SECRET) {
+      var incomingSecret = payload.secret ||
+        (e.parameter && e.parameter.secret) || "";
+      if (incomingSecret !== CONFIG.ZAPIER_WEBHOOK_SECRET) {
+        return jsonResponse_({ status: "error", reason: "Unauthorized" });
+      }
     }
 
-    // Extraer datos del evento Calendly
-    var eventData = extractCalendlyEventData_(payload);
+    // Detectar fuente y extraer datos
+    var eventData = null;
+    var source = payload.source || "";
+
+    if (source === "zapier" && CONFIG.ACCEPTED_SOURCE !== "calendly") {
+      // Payload viene de Zapier (formato plano)
+      eventData = extractZapierEventData_(payload);
+    } else if (payload.event === "invitee.created" && CONFIG.ACCEPTED_SOURCE !== "zapier") {
+      // Payload viene de Calendly directo (formato nativo)
+      eventData = extractCalendlyEventData_(payload);
+    } else if (CONFIG.ACCEPTED_SOURCE === "any") {
+      // Fallback: intentar ambos formatos
+      eventData = extractZapierEventData_(payload) || extractCalendlyEventData_(payload);
+    }
+
     if (!eventData) {
       return jsonResponse_({ status: "error", reason: "No se pudieron extraer datos del evento" });
     }
@@ -115,6 +137,54 @@ function extractCalendlyEventData_(payload) {
     calendlyEventUri: (p.scheduled_event && p.scheduled_event.uri) || "",
     cancelUrl: p.cancel_url || "",
     rescheduleUrl: p.reschedule_url || "",
+  };
+}
+
+
+/**
+ * Extrae datos del payload enviado por Zapier.
+ * Zapier envía un JSON plano con campos mapeados desde el trigger de Calendly.
+ *
+ * Formato esperado (configurado en el Zap → Webhooks POST → Data):
+ *   {
+ *     "source": "zapier",
+ *     "secret": "...",
+ *     "start_time": "2025-02-10T09:00:00-06:00",
+ *     "end_time": "2025-02-10T09:30:00-06:00",
+ *     "candidate_name": "Juan Pérez",
+ *     "candidate_email": "juan@example.com",
+ *     "event_type_name": "Entrevista técnica",
+ *     "calendly_event_uri": "https://api.calendly.com/...",
+ *     "cancel_url": "...",
+ *     "reschedule_url": "..."
+ *   }
+ */
+function extractZapierEventData_(payload) {
+  var startRaw = payload.start_time || payload.startTime;
+  var endRaw = payload.end_time || payload.endTime;
+
+  if (!startRaw || !endRaw) {
+    Logger.log("Zapier payload missing start_time or end_time");
+    return null;
+  }
+
+  var startTime = new Date(startRaw);
+  var endTime = new Date(endRaw);
+
+  if (isNaN(startTime.getTime()) || isNaN(endTime.getTime())) {
+    Logger.log("Zapier payload has invalid date format: " + startRaw + " / " + endRaw);
+    return null;
+  }
+
+  return {
+    startTime: startTime,
+    endTime: endTime,
+    candidateName: payload.candidate_name || payload.name || "Candidato",
+    candidateEmail: payload.candidate_email || payload.email || "",
+    eventType: payload.event_type_name || payload.event_type || "Entrevista",
+    calendlyEventUri: payload.calendly_event_uri || "",
+    cancelUrl: payload.cancel_url || "",
+    rescheduleUrl: payload.reschedule_url || "",
   };
 }
 

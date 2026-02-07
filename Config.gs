@@ -23,12 +23,14 @@ const CONFIG = {
   // Duración de cada entrevista en minutos
   INTERVIEW_DURATION_MINUTES: 30,
 
-  // Calendly webhook signing key (obtener de Calendly > Webhooks)
-  // Dejar vacío si no se usa verificación de firma
-  CALENDLY_WEBHOOK_SIGNING_KEY: "",
+  // Secreto compartido con Zapier para verificar que el POST es legítimo
+  // Generar un valor aleatorio (ej: "mi-secreto-zapier-abc123xyz")
+  // Este mismo valor se configura en el Zap como campo "secret"
+  ZAPIER_WEBHOOK_SECRET: "",
 
-  // Calendly Personal Access Token (para obtener detalles del evento)
-  CALENDLY_API_TOKEN: "",
+  // Fuentes de datos aceptadas: "zapier", "calendly", "any"
+  // "any" acepta ambos formatos (útil durante migración)
+  ACCEPTED_SOURCE: "any",
 
   // Emails de los entrevistadores (mapeo nombre When2Meet → email)
   // IMPORTANTE: los nombres deben coincidir EXACTAMENTE con los del When2Meet
@@ -47,5 +49,5 @@ const CONFIG = {
     "Entrevista agendada automáticamente.\n" +
     "Candidato: {candidato}\n" +
     "Email: {email}\n" +
-    "Agendado vía Calendly + Apps Script",
+    "Agendado vía Calendly + Zapier + Apps Script",
 };
