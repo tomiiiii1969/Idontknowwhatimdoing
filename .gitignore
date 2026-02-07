@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+.env
+credentials.json
+token.json
+venv/
+.venv/
+data/*.json
+data/*.csv
+!data/sample_when2meet.json
